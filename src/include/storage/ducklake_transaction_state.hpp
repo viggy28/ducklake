@@ -67,6 +67,9 @@ struct DuckLakeCommitContext {
 	                               const vector<DuckLakeTableInfo> &, vector<DuckLakeSchemaInfo> &) {
 		    return false;
 	    };
+	//! Collects exact indexed BIGINT values from a completed file after its final data_file_id is assigned.
+	std::function<void(DuckLakeFileInfo &)> collect_logical_index_values = [](DuckLakeFileInfo &) {
+	};
 	//! Emits the SQL that registers new inlined data tables (CREATE TABLE + ducklake_inlined_data_tables INSERT).
 	// LCOV_EXCL_START
 	std::function<string(DuckLakeSnapshot, const vector<DuckLakeTableInfo> &, const set<TableIndex> &)>

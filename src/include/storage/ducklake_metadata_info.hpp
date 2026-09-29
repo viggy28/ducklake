@@ -166,6 +166,13 @@ struct DuckLakeFilePartitionInfo {
 	Value partition_value;
 };
 
+//! Exact BIGINT values found in one data file for a READY logical equality index.
+struct DuckLakeBigIntIndexValues {
+	idx_t index_id;
+	FieldIndex column_id;
+	vector<int64_t> values;
+};
+
 struct DuckLakeFileInfo {
 	DataFileIndex id;
 	TableIndex table_id;
@@ -182,6 +189,7 @@ struct DuckLakeFileInfo {
 	MappingIndex mapping_id;
 	map<FieldIndex, DuckLakeColumnStats> column_stats;
 	vector<DuckLakeFilePartitionInfo> partition_values;
+	vector<DuckLakeBigIntIndexValues> bigint_index_values;
 };
 
 struct DuckLakeInlinedDataInfo {
