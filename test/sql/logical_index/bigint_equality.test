@@ -115,6 +115,12 @@ CALL ducklake_create_logical_index('ducklake', 'main', 'events', 'user_id')
 ----
 1
 
+# Resync can preserve READY declarations by stable column name before replacing table IDs.
+query T
+SELECT * FROM ducklake_list_logical_indexes('ducklake', 'main', 'events')
+----
+user_id
+
 # Exact signed BIGINT boundaries remain queryable through the raw-value mapping.
 query I
 SELECT count(*) FROM ducklake.events WHERE user_id IN (-9223372036854775808, 9223372036854775807)

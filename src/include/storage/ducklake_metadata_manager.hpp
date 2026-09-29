@@ -206,6 +206,7 @@ public:
 	                                       const string &column_name);
 	virtual void InvalidateLogicalIndex(DuckLakeTableEntry &table, const string &column_name);
 	virtual void DropLogicalIndexes(DuckLakeTableEntry &table);
+	virtual vector<string> GetReadyLogicalIndexColumns(DuckLakeTableEntry &table);
 	virtual void CollectBigIntLogicalIndexValues(ClientContext &context, DuckLakeFileInfo &file);
 	virtual void EnsureLogicalIndexTables();
 	virtual vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,

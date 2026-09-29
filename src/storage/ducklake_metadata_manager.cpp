@@ -1827,6 +1827,31 @@ DELETE FROM {METADATA_CATALOG}.streambed_equality_index_definition WHERE table_i
 	}
 }
 
+vector<string> DuckLakeMetadataManager::GetReadyLogicalIndexColumns(DuckLakeTableEntry &table) {
+	string query = StringUtil::Format(R"(
+SELECT column_info.column_name
+FROM {METADATA_CATALOG}.streambed_equality_index_definition definition
+JOIN {METADATA_CATALOG}.ducklake_column column_info
+  ON column_info.table_id = definition.table_id
+ AND column_info.column_id = definition.column_id
+ AND column_info.end_snapshot IS NULL
+WHERE definition.table_id = %llu AND definition.state = 'READY'
+ORDER BY definition.index_id
+)", table.GetTableId().index);
+	auto result = Query(query);
+	if (result->HasError()) {
+		if (result->GetErrorObject().Type() == ExceptionType::CATALOG) {
+			return {};
+		}
+		result->GetErrorObject().Throw("Failed to list logical equality indexes: ");
+	}
+	vector<string> columns;
+	for (auto &row : *result) {
+		columns.push_back(row.GetValue<string>(0));
+	}
+	return columns;
+}
+
 static bool TryGetBigIntEquality(const TableFilter &filter, int64_t &result) {
 	switch (filter.filter_type) {
 	case TableFilterType::CONSTANT_COMPARISON: {

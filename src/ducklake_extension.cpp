@@ -85,6 +85,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(invalidate_logical_index);
 	DuckLakeDropLogicalIndexesFunction drop_logical_indexes;
 	loader.RegisterFunction(drop_logical_indexes);
+	DuckLakeListLogicalIndexesFunction list_logical_indexes;
+	loader.RegisterFunction(list_logical_indexes);
 
 	DuckLakeOptionsFunction options;
 	loader.RegisterFunction(options);
