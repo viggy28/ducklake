@@ -7,7 +7,7 @@
 
 namespace duckdb {
 
-enum class LogicalIndexOperation : uint8_t { CREATE, INVALIDATE, DROP };
+enum class LogicalIndexOperation : uint8_t { CREATE, INVALIDATE, DROP, LIST };
 
 struct LogicalIndexBindData : public TableFunctionData {
 	LogicalIndexBindData(LogicalIndexOperation operation_p, string catalog_p, string schema_p, string table_p,
@@ -25,6 +25,9 @@ struct LogicalIndexBindData : public TableFunctionData {
 
 struct LogicalIndexState : public GlobalTableFunctionState {
 	bool finished = false;
+	bool loaded = false;
+	idx_t offset = 0;
+	vector<string> columns;
 };
 
 static unique_ptr<FunctionData> BindLogicalIndexOperation(TableFunctionBindInput &input,
@@ -33,6 +36,9 @@ static unique_ptr<FunctionData> BindLogicalIndexOperation(TableFunctionBindInput
 	if (operation == LogicalIndexOperation::CREATE) {
 		return_types.emplace_back(LogicalType::UBIGINT);
 		names.emplace_back("index_id");
+	} else if (operation == LogicalIndexOperation::LIST) {
+		return_types.emplace_back(LogicalType::VARCHAR);
+		names.emplace_back("column_name");
 	} else {
 		return_types.emplace_back(LogicalType::BOOLEAN);
 		names.emplace_back("success");
@@ -58,23 +64,43 @@ static unique_ptr<FunctionData> DropLogicalIndexesBind(ClientContext &, TableFun
 	return BindLogicalIndexOperation(input, return_types, names, LogicalIndexOperation::DROP);
 }
 
+static unique_ptr<FunctionData> ListLogicalIndexesBind(ClientContext &, TableFunctionBindInput &input,
+                                                       vector<LogicalType> &return_types, vector<string> &names) {
+	return BindLogicalIndexOperation(input, return_types, names, LogicalIndexOperation::LIST);
+}
+
 static unique_ptr<GlobalTableFunctionState> LogicalIndexInit(ClientContext &, TableFunctionInitInput &) {
 	return make_uniq<LogicalIndexState>();
 }
 
 static void LogicalIndexExecute(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	auto &state = input.global_state->Cast<LogicalIndexState>();
+	auto &bind = input.bind_data->Cast<LogicalIndexBindData>();
 	if (state.finished) {
 		return;
 	}
-	state.finished = true;
-	auto &bind = input.bind_data->Cast<LogicalIndexBindData>();
 	auto &catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, Value(bind.catalog));
 	auto entry = catalog.GetEntry<TableCatalogEntry>(context, bind.schema, bind.table, OnEntryNotFound::THROW_EXCEPTION);
 	auto &table = entry->Cast<DuckLakeTableEntry>();
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
 	auto &metadata_manager = transaction.GetMetadataManager();
 
+	if (bind.operation == LogicalIndexOperation::LIST) {
+		if (!state.loaded) {
+			state.columns = metadata_manager.GetReadyLogicalIndexColumns(table);
+			state.loaded = true;
+		}
+		auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, state.columns.size() - state.offset);
+		output.SetCardinality(count);
+		for (idx_t row = 0; row < count; row++) {
+			output.SetValue(0, row, Value(state.columns[state.offset + row]));
+		}
+		state.offset += count;
+		state.finished = state.offset >= state.columns.size();
+		return;
+	}
+
+	state.finished = true;
 	output.SetCardinality(1);
 	switch (bind.operation) {
 	case LogicalIndexOperation::CREATE: {
@@ -90,6 +116,8 @@ static void LogicalIndexExecute(ClientContext &context, TableFunctionInput &inpu
 		metadata_manager.DropLogicalIndexes(table);
 		output.SetValue(0, 0, Value::BOOLEAN(true));
 		break;
+	case LogicalIndexOperation::LIST:
+		throw InternalException("Unexpected logical index list operation");
 	}
 }
 
@@ -109,6 +137,12 @@ DuckLakeDropLogicalIndexesFunction::DuckLakeDropLogicalIndexesFunction()
     : TableFunction("ducklake_drop_logical_indexes",
                     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalIndexExecute,
                     DropLogicalIndexesBind, LogicalIndexInit) {
+}
+
+DuckLakeListLogicalIndexesFunction::DuckLakeListLogicalIndexesFunction()
+    : TableFunction("ducklake_list_logical_indexes",
+                    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalIndexExecute,
+                    ListLogicalIndexesBind, LogicalIndexInit) {
 }
 
 } // namespace duckdb

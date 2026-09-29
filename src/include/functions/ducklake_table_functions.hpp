@@ -139,6 +139,11 @@ public:
 	DuckLakeDropLogicalIndexesFunction();
 };
 
+class DuckLakeListLogicalIndexesFunction : public TableFunction {
+public:
+	DuckLakeListLogicalIndexesFunction();
+};
+
 class DuckLakeSetCommitMessage : public TableFunction {
 public:
 	DuckLakeSetCommitMessage();
