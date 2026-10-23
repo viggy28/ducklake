@@ -10,14 +10,14 @@ namespace duckdb {
 enum class LogicalIndexOperation : uint8_t { CREATE, INVALIDATE, DROP, LIST };
 
 struct LogicalIndexBindData : public TableFunctionData {
-	LogicalIndexBindData(LogicalIndexOperation operation_p, string catalog_p, string schema_p, string table_p,
+	LogicalIndexBindData(LogicalIndexOperation operation_p, DuckLakeCatalog &catalog_p, string schema_p, string table_p,
 	                     string column_p = string())
-	    : operation(operation_p), catalog(std::move(catalog_p)), schema(std::move(schema_p)),
-	      table(std::move(table_p)), column(std::move(column_p)) {
+	    : operation(operation_p), catalog(catalog_p), schema(std::move(schema_p)), table(std::move(table_p)),
+	      column(std::move(column_p)) {
 	}
 
 	LogicalIndexOperation operation;
-	string catalog;
+	DuckLakeCatalog &catalog;
 	string schema;
 	string table;
 	string column;
@@ -30,8 +30,8 @@ struct LogicalIndexState : public GlobalTableFunctionState {
 	vector<string> columns;
 };
 
-static unique_ptr<FunctionData> BindLogicalIndexOperation(TableFunctionBindInput &input,
-                                                          vector<LogicalType> &return_types, vector<string> &names,
+static unique_ptr<FunctionData> BindLogicalIndexOperation(ClientContext &context, TableFunctionBindInput &input,
+                                                          vector<LogicalType> &return_types, vector<Identifier> &names,
                                                           LogicalIndexOperation operation) {
 	if (operation == LogicalIndexOperation::CREATE) {
 		return_types.emplace_back(LogicalType::UBIGINT);
@@ -43,30 +43,32 @@ static unique_ptr<FunctionData> BindLogicalIndexOperation(TableFunctionBindInput
 		return_types.emplace_back(LogicalType::BOOLEAN);
 		names.emplace_back("success");
 	}
+	auto &catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, input);
+	catalog.VerifyWritable();
 	auto column = input.inputs.size() > 3 ? StringValue::Get(input.inputs[3]) : string();
-	return make_uniq<LogicalIndexBindData>(operation, StringValue::Get(input.inputs[0]),
-	                                        StringValue::Get(input.inputs[1]), StringValue::Get(input.inputs[2]),
-	                                        std::move(column));
+	return make_uniq<LogicalIndexBindData>(operation, catalog, StringValue::Get(input.inputs[1]),
+	                                       StringValue::Get(input.inputs[2]), std::move(column));
 }
 
-static unique_ptr<FunctionData> CreateLogicalIndexBind(ClientContext &, TableFunctionBindInput &input,
-                                                       vector<LogicalType> &return_types, vector<string> &names) {
-	return BindLogicalIndexOperation(input, return_types, names, LogicalIndexOperation::CREATE);
+static unique_ptr<FunctionData> CreateLogicalIndexBind(ClientContext &context, TableFunctionBindInput &input,
+                                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
+	return BindLogicalIndexOperation(context, input, return_types, names, LogicalIndexOperation::CREATE);
 }
 
-static unique_ptr<FunctionData> InvalidateLogicalIndexBind(ClientContext &, TableFunctionBindInput &input,
-                                                           vector<LogicalType> &return_types, vector<string> &names) {
-	return BindLogicalIndexOperation(input, return_types, names, LogicalIndexOperation::INVALIDATE);
+static unique_ptr<FunctionData> InvalidateLogicalIndexBind(ClientContext &context, TableFunctionBindInput &input,
+                                                           vector<LogicalType> &return_types,
+                                                           vector<Identifier> &names) {
+	return BindLogicalIndexOperation(context, input, return_types, names, LogicalIndexOperation::INVALIDATE);
 }
 
-static unique_ptr<FunctionData> DropLogicalIndexesBind(ClientContext &, TableFunctionBindInput &input,
-                                                       vector<LogicalType> &return_types, vector<string> &names) {
-	return BindLogicalIndexOperation(input, return_types, names, LogicalIndexOperation::DROP);
+static unique_ptr<FunctionData> DropLogicalIndexesBind(ClientContext &context, TableFunctionBindInput &input,
+                                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
+	return BindLogicalIndexOperation(context, input, return_types, names, LogicalIndexOperation::DROP);
 }
 
-static unique_ptr<FunctionData> ListLogicalIndexesBind(ClientContext &, TableFunctionBindInput &input,
-                                                       vector<LogicalType> &return_types, vector<string> &names) {
-	return BindLogicalIndexOperation(input, return_types, names, LogicalIndexOperation::LIST);
+static unique_ptr<FunctionData> ListLogicalIndexesBind(ClientContext &context, TableFunctionBindInput &input,
+                                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
+	return BindLogicalIndexOperation(context, input, return_types, names, LogicalIndexOperation::LIST);
 }
 
 static unique_ptr<GlobalTableFunctionState> LogicalIndexInit(ClientContext &, TableFunctionInitInput &) {
@@ -79,9 +81,8 @@ static void LogicalIndexExecute(ClientContext &context, TableFunctionInput &inpu
 	if (state.finished) {
 		return;
 	}
-	auto &catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, Value(bind.catalog));
-	auto entry = catalog.GetEntry<TableCatalogEntry>(context, bind.schema, bind.table, OnEntryNotFound::THROW_EXCEPTION);
-	auto &table = entry->Cast<DuckLakeTableEntry>();
+	auto &catalog = bind.catalog;
+	auto &table = DuckLakeBaseMetadataFunction::GetTableEntry(context, catalog, bind.schema, bind.table);
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
 	auto &metadata_manager = transaction.GetMetadataManager();
 
@@ -134,15 +135,13 @@ DuckLakeInvalidateLogicalIndexFunction::DuckLakeInvalidateLogicalIndexFunction()
 }
 
 DuckLakeDropLogicalIndexesFunction::DuckLakeDropLogicalIndexesFunction()
-    : TableFunction("ducklake_drop_logical_indexes",
-                    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalIndexExecute,
-                    DropLogicalIndexesBind, LogicalIndexInit) {
+    : TableFunction("ducklake_drop_logical_indexes", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+                    LogicalIndexExecute, DropLogicalIndexesBind, LogicalIndexInit) {
 }
 
 DuckLakeListLogicalIndexesFunction::DuckLakeListLogicalIndexesFunction()
-    : TableFunction("ducklake_list_logical_indexes",
-                    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalIndexExecute,
-                    ListLogicalIndexesBind, LogicalIndexInit) {
+    : TableFunction("ducklake_list_logical_indexes", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+                    LogicalIndexExecute, ListLogicalIndexesBind, LogicalIndexInit) {
 }
 
 } // namespace duckdb
