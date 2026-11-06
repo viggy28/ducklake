@@ -350,6 +350,7 @@ public:
 	virtual vector<string> GetReadyLogicalIndexColumns(DuckLakeTableEntry &table);
 	virtual void CollectBigIntLogicalIndexValues(ClientContext &context, DuckLakeFileInfo &file);
 	virtual void EnsureLogicalIndexTables();
+	virtual bool HasPersistentLogicalIndexMarker();
 
 	virtual vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                                         DuckLakeSnapshot snapshot);

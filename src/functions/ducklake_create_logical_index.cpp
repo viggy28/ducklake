@@ -44,7 +44,6 @@ static unique_ptr<FunctionData> BindLogicalIndexOperation(ClientContext &context
 		names.emplace_back("success");
 	}
 	auto &catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, input);
-	catalog.VerifyWritable();
 	auto column = input.inputs.size() > 3 ? StringValue::Get(input.inputs[3]) : string();
 	return make_uniq<LogicalIndexBindData>(operation, catalog, StringValue::Get(input.inputs[1]),
 	                                       StringValue::Get(input.inputs[2]), std::move(column));

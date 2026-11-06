@@ -1008,15 +1008,8 @@ unordered_set<string> DuckLakeMetadataManager::GetInlinedTableNames(TableIndex t
 
 DuckLakeCatalogInfo DuckLakeMetadataManager::GetCatalogForSnapshot(DuckLakeSnapshot snapshot) {
 	auto &ducklake_catalog = transaction.GetCatalog();
-	if (!ducklake_catalog.HasLogicalIndexes()) {
-		auto marker = Query("SELECT 1 FROM {METADATA_CATALOG}.ducklake_metadata "
-		                    "WHERE key = 'streambed_logical_indexes' AND value = 'true' LIMIT 1");
-		marker->ThrowIfError("Failed to load logical equality index capability: ");
-		for (auto &row : *marker) {
-			(void)row;
-			ducklake_catalog.SetHasLogicalIndexes();
-			break;
-		}
+	if (!ducklake_catalog.HasLogicalIndexes() && HasPersistentLogicalIndexMarker()) {
+		ducklake_catalog.SetHasLogicalIndexes();
 	}
 	return BuildCatalogForSnapshot(
 	    snapshot, [this](DuckLakeSnapshot s, string q) { return Query(s, q); }, ducklake_catalog.DataPath(),
@@ -2173,6 +2166,17 @@ string DuckLakeMetadataManager::BuildBucketPartitionPruningClause(DuckLakeTableE
 	return StringUtil::Format("(data.partition_id IS DISTINCT FROM %d OR (%s))", partition_data->partition_id, result);
 }
 
+bool DuckLakeMetadataManager::HasPersistentLogicalIndexMarker() {
+	auto marker = Query("SELECT 1 FROM {METADATA_CATALOG}.ducklake_metadata "
+	                    "WHERE key = 'streambed_logical_indexes' AND value = 'true' LIMIT 1");
+	marker->ThrowIfError("Failed to load logical equality index capability: ");
+	for (auto &row : *marker) {
+		(void)row;
+		return true;
+	}
+	return false;
+}
+
 void DuckLakeMetadataManager::EnsureLogicalIndexTables() {
 	if (!SupportsAppender()) {
 		throw NotImplementedException("Logical equality indexes require a DuckDB-backed DuckLake metadata catalog");
@@ -2233,7 +2237,12 @@ JOIN {METADATA_CATALOG}.ducklake_column column_info
 WHERE definition.table_id = %llu AND definition.state = 'READY'
 ORDER BY definition.index_id)",
 	                                            file.table_id.index));
-	definitions->ThrowIfError("Failed to load logical equality index definitions: ");
+	if (definitions->HasError()) {
+		if (definitions->GetErrorObject().Type() == ExceptionType::CATALOG && !HasPersistentLogicalIndexMarker()) {
+			return;
+		}
+		definitions->GetErrorObject().Throw("Failed to load logical equality index definitions: ");
+	}
 	DuckLakeFileData file_data;
 	file_data.path = file.file_name;
 	file_data.encryption_key = file.encryption_key;
@@ -2340,7 +2349,7 @@ void DuckLakeMetadataManager::InvalidateLogicalIndex(DuckLakeTableEntry &table, 
 	                             "WHERE table_id = %llu AND column_id = %llu",
 	                             table.GetTableId().index, field->GetFieldIndex().index));
 	if (result->HasError()) {
-		if (result->GetErrorObject().Type() == ExceptionType::CATALOG) {
+		if (result->GetErrorObject().Type() == ExceptionType::CATALOG && !HasPersistentLogicalIndexMarker()) {
 			return;
 		}
 		result->GetErrorObject().Throw("Failed to invalidate logical equality index: ");
@@ -2357,7 +2366,7 @@ DELETE FROM {METADATA_CATALOG}.streambed_equality_index_definition WHERE table_i
 )",
 	                                       table.GetTableId().index, table.GetTableId().index));
 	if (result->HasError()) {
-		if (result->GetErrorObject().Type() == ExceptionType::CATALOG) {
+		if (result->GetErrorObject().Type() == ExceptionType::CATALOG && !HasPersistentLogicalIndexMarker()) {
 			return;
 		}
 		result->GetErrorObject().Throw("Failed to drop logical equality indexes: ");
@@ -2377,7 +2386,7 @@ ORDER BY definition.index_id
 )",
 	                                       table.GetTableId().index));
 	if (result->HasError()) {
-		if (result->GetErrorObject().Type() == ExceptionType::CATALOG) {
+		if (result->GetErrorObject().Type() == ExceptionType::CATALOG && !HasPersistentLogicalIndexMarker()) {
 			return {};
 		}
 		result->GetErrorObject().Throw("Failed to list logical equality indexes: ");
@@ -2443,8 +2452,9 @@ WHERE table_id = %llu AND state = 'READY')",
 		                                            table_id.index));
 		if (definitions->HasError()) {
 			// The process-local capability flag can outlive a rolled-back transaction
-			// that created the metadata tables. Missing optional tables mean no index.
-			if (definitions->GetErrorObject().Type() == ExceptionType::CATALOG) {
+			// that created the optional tables. Suppress that stale flag only when the
+			// durable marker is also absent; a marked catalog must fail closed.
+			if (definitions->GetErrorObject().Type() == ExceptionType::CATALOG && !HasPersistentLogicalIndexMarker()) {
 				definitions.reset();
 			} else {
 				definitions->GetErrorObject().Throw("Failed to load logical equality indexes for pruning: ");

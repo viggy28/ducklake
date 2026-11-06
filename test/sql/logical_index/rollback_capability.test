@@ -1,0 +1,42 @@
+# name: test/sql/logical_index/rollback_capability.test
+# description: Rolled-back logical-index setup does not poison later writes in the same process
+# group: [logical_index]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}/{UUID}-data
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.events(user_id BIGINT, payload VARCHAR)
+
+statement ok
+BEGIN
+
+query I
+CALL ducklake_create_logical_index('ducklake', 'main', 'events', 'user_id')
+----
+1
+
+statement ok
+ROLLBACK
+
+# The in-memory capability flag remains set, but its metadata DDL and durable
+# marker rolled back. A later file commit must treat the absent tables as no index.
+statement ok
+INSERT INTO ducklake.events VALUES (42, 'after rollback')
+
+query I
+SELECT count(*) FROM ducklake.events WHERE user_id = 42
+----
+1
+
+query T
+SELECT * FROM ducklake_list_logical_indexes('ducklake', 'main', 'events')
+----
